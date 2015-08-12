@@ -147,6 +147,14 @@ class DcpClient(MemcachedClient):
         return DcpStream(generator, vbucket)
 
 
+    def snapshot_marker(self, vbucket, start_seqno, end_seqno):
+        op = SnapshotMarker(vbucket, start_seqno, end_seqno)
+        self.send_op(op)
+
+    def send_deletion(self, vbucket, key, by_seqno):
+        op = Deletion(vbucket, key, by_seqno)
+        return self._handle_op(op)
+
     def get_stream(self, vbucket):
         """ for use by external clients to get stream
             associated with a particular vbucket """
@@ -636,3 +644,28 @@ class Quit(Operation):
         response = { 'opcode'        : opcode,
                      'status'        : status}
         return response
+
+
+class SnapshotMarker(Operation):
+    def __init__(self, vbucket, start_seqno, end_seqno):
+        opcode = CMD_SNAPSHOT_MARKER
+        extras = struct.pack(">QQI",
+                             start_seqno,
+                             end_seqno,
+                             0)
+        Operation.__init__(self, opcode,
+                           extras = extras,
+                           vbucket = vbucket, opaque = 0x01000000)
+
+
+class Deletion(Operation):
+    def __init__(self, vbucket, key, by_seqno):
+        opcode = CMD_DELETION
+        extras = struct.pack(">QQH",
+                             by_seqno,
+                             1,
+                             0)
+        Operation.__init__(self, opcode,
+                           key = key,
+                           extras=extras,
+                           vbucket = vbucket, opaque = 0x01000000)

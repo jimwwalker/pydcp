@@ -170,7 +170,7 @@ class MemcachedClient(object):
 
     def send_snapshot_marker(self, start, end, vbucket= -1):
         """Set a value in the memcached server without handling the response"""
-        #self._set_vbucket(key, vbucket)
+        self._set_vbucket("", vbucket)
         opaque = self.r.randint(0, 2 ** 32)
         self._sendCmd(memcacheConstants.CMD_SNAPSHOT_MARKER, '', '', opaque, struct.pack("QQI", start, end, 1), 0)
         return self._handleSingleResponse(opaque)
