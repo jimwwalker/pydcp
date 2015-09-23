@@ -39,13 +39,15 @@ class MemcachedClient(object):
 
     vbucketId = 0
 
-    def __init__(self, host='127.0.0.1', port=11211, timeout=30):
+    def __init__(self, host='127.0.0.1', port=11211, timeout=30, illegal=0):
         self.host = host
         self.port = port
         self.timeout = timeout
         self._createConn()
         self.r = random.Random()
         self.vbucket_count = 1024
+        self.send_illegal_packet = illegal
+        self.send_count = 0
 
     def _createConn(self):
         self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -63,20 +65,38 @@ class MemcachedClient(object):
         self.close()
 
     def _sendCmd(self, cmd, key, val, opaque, extraHeader='', cas=0):
+
         self._sendMsg(cmd, key, val, opaque, extraHeader=extraHeader, cas=cas,
                       vbucketId=self.vbucketId)
 
     def _sendMsg(self, cmd, key, val, opaque, extraHeader='', cas=0,
                  dtype=0, vbucketId=0,
                  fmt=REQ_PKT_FMT, magic=REQ_MAGIC_BYTE):
-        msg = struct.pack(fmt, magic,
-            cmd, len(key), len(extraHeader), dtype, vbucketId,
-                len(key) + len(extraHeader) + len(val), opaque, cas)
-        _, w, _ = select.select([], [self.s], [], self.timeout)
-        if w:
-            self.s.send(msg + extraHeader + key + val)
+
+        self.send_count = self.send_count + 1
+
+        if self.send_count == self.send_illegal_packet:
+            print "Sending malformed packet\n"
+            msg = struct.pack(fmt, magic,
+            cmd, 32, 0, dtype, vbucketId,
+                1, opaque, cas)
+
+            _, w, _ = select.select([], [self.s], [], self.timeout)
+            if w:
+                self.s.send(msg + extraHeader + key + val)
+                exit
+            else:
+                raise exceptions.EOFError("Timeout waiting for socket send. from {0}".format(self.host))
         else:
-            raise exceptions.EOFError("Timeout waiting for socket send. from {0}".format(self.host))
+            msg = struct.pack(fmt, magic,
+                cmd, len(key), len(extraHeader), dtype, vbucketId,
+                    len(key) + len(extraHeader) + len(val), opaque, cas)
+
+            _, w, _ = select.select([], [self.s], [], self.timeout)
+            if w:
+                self.s.send(msg + extraHeader + key + val)
+            else:
+                raise exceptions.EOFError("Timeout waiting for socket send. from {0}".format(self.host))
 
     def _recvMsg(self):
         response = ""
@@ -125,7 +145,7 @@ class MemcachedClient(object):
         """Send a command and await its response."""
         opaque = self.r.randint(0, 2 ** 32)
         self._sendCmd(cmd, key, val, opaque, extraHeader, cas)
-        return self._handleSingleResponse(opaque)
+        # return self._handleSingleResponse(opaque)
 
     def _mutate(self, cmd, key, exp, flags, cas, val):
         return self._doCmd(cmd, key, val, struct.pack(SET_PKT_FMT, flags, exp),
@@ -287,6 +307,23 @@ class MemcachedClient(object):
         """Perform plain auth."""
         return self.sasl_auth_start('PLAIN', '\0'.join([foruser, user, password]))
 
+    def sasl_auth_step_crash(self, user, password):
+        msg = struct.pack(REQ_PKT_FMT,
+                          REQ_MAGIC_BYTE,
+                          memcacheConstants.CMD_SASL_STEP,
+                          65535,
+                          len(''),
+                          0,
+                          0,
+                          56,
+                          self.r.randint(0, 2 ** 32),
+                          0)
+        _, w, _ = select.select([], [self.s], [], self.timeout)
+        if w:
+            self.s.send(msg + "" + "" + "")
+        else:
+            raise exceptions.EOFError("Timeout waiting for socket send. from {0}".format(self.host))
+
     def sasl_auth_cram_md5(self, user, password):
         """Start a plan auth session."""
         challenge = None
@@ -298,6 +335,23 @@ class MemcachedClient(object):
             challenge = e.msg.split(' ')[0]
 
         dig = hmac.HMAC(password, challenge).hexdigest()
+        return self._doCmd(memcacheConstants.CMD_SASL_STEP, 'CRAM-MD5',
+                           user + ' ' + dig)
+
+
+    def sasl_auth_cram_md5_crash(self, user, password):
+        """Start a plan auth session."""
+        challenge = None
+        try:
+            self.sasl_auth_start('CRAM-MD5', '')
+        except MemcachedError, e:
+            if e.status != memcacheConstants.ERR_AUTH_CONTINUE:
+                raise
+            challenge = e.msg.split(' ')[0]
+
+        dig = hmac.HMAC(password, challenge).hexdigest()
+        self.sasl_auth_step_crash(user, password)
+        self.sasl_auth_step_crash(user, password)
         return self._doCmd(memcacheConstants.CMD_SASL_STEP, 'CRAM-MD5',
                            user + ' ' + dig)
 

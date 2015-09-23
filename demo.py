@@ -2,8 +2,8 @@
 import pprint
 import time
 
-from uprclient import UprClient
-from mcdclient import McdClient
+from lib.dcp_bin_client import DcpClient
+from lib.mc_bin_client import MemcachedClient as McdClient
 from constants import *
 
 def simple_handshake_demo():
@@ -62,34 +62,26 @@ def add_stream_demo():
     mcd_client.shutdown()
 
 def multiple_streams(host, port):
-    upr_client = UprClient(host, port)
+    upr_client = DcpClient(host, port)
     mcd_client = McdClient(host, port)
 
-    op = upr_client.sasl_auth_plain('gamesim-sample', '')
-    response = op.next_response()
-    assert response['status'] == SUCCESS
-
-    op = mcd_client.sasl_auth_plain('gamesim-sample', '')
-    response = op.next_response()
-    assert response['status'] == SUCCESS
 
     num_vbs = 10
-    op = mcd_client.stats('vbucket-seqno')
-    resp = op.next_response()
-    assert resp['status'] == SUCCESS
+    resp = mcd_client.stats('vbucket-seqno')
 
-    op = upr_client.open_producer("mystream")
-    response = op.next_response()
-    assert response['status'] == SUCCESS
+
+    resp1 = upr_client.open_producer("mystream")
 
     streams = {}
     for vb in range(num_vbs):
-        en = int(resp['value']['vb_%d_high_seqno' % vb])
+        en = int(resp['vb_%d:high_seqno' % vb])
         op = upr_client.stream_req(vb, 0, 0, en, 0, 0)
         print "Create stream vb %d st 0 en %d" %  (vb, en)
         streams[vb] = {'op' : op,
                        'mutations' : 0,
                        'last_seqno' : 0 }
+        if vb == 50:
+            exit(0)
 
     while len(streams) > 0:
         for vb in streams.keys():
@@ -117,4 +109,4 @@ def multiple_streams(host, port):
 if __name__ == "__main__":
     #simple_handshake_demo()
     #add_stream_demo()
-    multiple_streams('127.0.0.1', 12000)
+    multiple_streams('mancouch', 12000)

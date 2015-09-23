@@ -125,6 +125,7 @@ class DcpClient(MemcachedClient):
                                         vb_uuid, snap_start, snap_end)
 
         response = self._handle_op(op)
+        return None
 
         def __generator(response):
 
@@ -168,6 +169,7 @@ class DcpClient(MemcachedClient):
 
         self.ops[op.opaque] = op
         self.send_op(op)
+        return None
 
         response = None
         while retries > 0:
