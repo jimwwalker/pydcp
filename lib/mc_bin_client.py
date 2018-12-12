@@ -16,7 +16,7 @@ import zlib
 from rest_client import RestClient
 
 from memcacheConstants import REQ_MAGIC_BYTE, RES_MAGIC_BYTE, ALT_REQ_MAGIC_BYTE, ALT_RES_MAGIC_BYTE
-from memcacheConstants import REQ_PKT_FMT, RES_PKT_FMT, MIN_RECV_PACKET, ALT_RES_PKT_FMT
+from memcacheConstants import REQ_PKT_FMT, RES_PKT_FMT, MIN_RECV_PACKET, ALT_PKT_FMT
 from memcacheConstants import SET_PKT_FMT, INCRDECR_RES_FMT
 import memcacheConstants
 
@@ -94,19 +94,30 @@ class MemcachedClient(object):
     def __del__(self):
         self.close()
 
-    def _sendCmd(self, cmd, key, val, opaque, extraHeader='', cas=0):
+    def _sendCmd(self, cmd, key, val, opaque, extraHeader='', cas=0, sid=None):
         self._sendMsg(cmd, key, val, opaque, extraHeader=extraHeader, cas=cas,
-                      vbucketId=self.vbucketId)
+                      vbucketId=self.vbucketId, sid=sid)
 
     def _sendMsg(self, cmd, key, val, opaque, extraHeader='', cas=0,
                  dtype=0, vbucketId=0,
-                 fmt=REQ_PKT_FMT, magic=REQ_MAGIC_BYTE):
-        msg = struct.pack(fmt, magic,
-            cmd, len(key), len(extraHeader), dtype, vbucketId,
-                len(key) + len(extraHeader) + len(val), opaque, cas)
+                 fmt=REQ_PKT_FMT, magic=REQ_MAGIC_BYTE, sid=None):
+
+        frameextra = ''
+        if sid:
+            # encode the sid in frame-extras
+            frameextralen = 3
+            msg = struct.pack(ALT_PKT_FMT, ALT_REQ_MAGIC_BYTE,
+                cmd, frameextralen, len(key), len(extraHeader), dtype, vbucketId,
+                    len(key) + len(extraHeader) + len(val) + frameextralen, opaque, cas)
+            frameextra = struct.pack(">BH", 0x22, sid)
+        else:
+            msg = struct.pack(fmt, magic,
+                cmd, len(key), len(extraHeader), dtype, vbucketId,
+                    len(key) + len(extraHeader) + len(val), opaque, cas)
+
         _, w, _ = select.select([], [self.s], [], self.timeout)
         if w:
-            self.s.sendall(msg + extraHeader + key + val)
+            self.s.sendall(msg + frameextra + extraHeader + key + val)
         else:
             raise exceptions.EOFError("Timeout waiting for socket send. from {0}".format(self.host))
 
@@ -138,7 +149,7 @@ class MemcachedClient(object):
         cas = 0
         if magic == ALT_RES_MAGIC_BYTE or magic == ALT_REQ_MAGIC_BYTE:
             magic, cmd, frameextralen, keylen, extralen, dtype, errcode, remaining, opaque, cas = \
-                struct.unpack(ALT_RES_PKT_FMT, response)
+                struct.unpack(ALT_PKT_FMT, response)
         else:
             magic, cmd, keylen, extralen, dtype, errcode, remaining, opaque, cas = \
                 struct.unpack(RES_PKT_FMT, response)

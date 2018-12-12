@@ -205,6 +205,7 @@ def process_dcp_traffic(streams, args):
                                       stream)
                     elif opcode == CMD_SNAPSHOT_MARKER:
                         vb['snap_start'], vb['snap_end'] = handleMarker(response)
+                        vb['stream'].close_stream(89)
                     elif opcode == CMD_SYSTEM_EVENT:
                         vb['manifest'] = handleSystemEvent(response,
                                                            vb['manifest'])
@@ -212,6 +213,7 @@ def process_dcp_traffic(streams, args):
                                       vb['snap_end'],
                                       response['by_seqno'],
                                       stream)
+
                     elif opcode == CMD_STREAM_END:
                         print "Received stream end. Stream complete with "\
                               "reason {}.".format(response['flags'])

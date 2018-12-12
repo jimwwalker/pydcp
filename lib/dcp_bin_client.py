@@ -3,6 +3,7 @@ from mc_bin_client import MemcachedClient,decodeCollectionID
 from memcacheConstants import *
 import Queue
 import time
+import pprint
 
 MAX_SEQNO = 0xFFFFFFFFFFFFFFFF
 
@@ -128,7 +129,6 @@ class DcpClient(MemcachedClient):
              vb_uuid = vbucket uuid as specified in failoverlog
              snapt_start = start seqno of snapshot
              snap_end = end seqno of snapshot """
-
         op = StreamRequest(vbucket,
                            takeover,
                            start_seqno,
@@ -141,7 +141,7 @@ class DcpClient(MemcachedClient):
                            json=json)
 
         response = self._handle_op(op)
-
+        pprint.pprint(dir(self))
         def __generator(response):
 
             yield response
@@ -160,7 +160,7 @@ class DcpClient(MemcachedClient):
 
         # start generator and pass to dcpStream class
         generator = __generator(response)
-        return DcpStream(generator, vbucket)
+        return DcpStream(self, generator, vbucket)
 
     def get_stream(self, vbucket):
         """ for use by external clients to get stream
@@ -195,7 +195,8 @@ class DcpClient(MemcachedClient):
                       op.key,
                       op.value,
                       op.opaque,
-                      op.extras)
+                      op.extras,
+                      sid=op.sid)
 
     def recv_op(self, op):
 
@@ -277,7 +278,7 @@ class DcpClient(MemcachedClient):
 class DcpStream(object):
     """ DcpStream class manages a stream generator that yields mutations """
 
-    def __init__(self, generator, vbucket):
+    def __init__(self, mcclient, generator, vbucket):
 
         self.__generator = generator
         self.vbucket = vbucket
@@ -293,6 +294,7 @@ class DcpStream(object):
         self.last_by_seqno = 0
         self.mutation_count = 0
         self._ended = False
+        self.mcclient = mcclient
 
     def next_response(self):
 
@@ -353,18 +355,22 @@ class DcpStream(object):
 
         return responses
 
+    def close_stream(self, sid=None):
+        op = CloseStream(self.vbucket, sid=sid)
+        return self.mcclient._handle_op(op)
 
 class Operation(object):
     """ Operation Class generically represents any dcp operation providing
         default values for attributes common to each operation """
 
     def __init__(self, opcode, key='', value='',
-                 extras='', vbucket=0, opaque=None):
+                 extras='', vbucket=0, opaque=None, sid=None):
         self.opcode = opcode
         self.key = key
         self.value = value
         self.extras = extras
         self.vbucket = vbucket
+        self.sid = sid
         self.opaque = opaque or random.Random().randint(0, 2 ** 32)
         self.queue = Queue.Queue()
 
@@ -413,10 +419,11 @@ class OpenNotifier(Open):
 class CloseStream(Operation):
     """ CloseStream spec """
 
-    def __init__(self, vbucket, takeover=0):
+    def __init__(self, vbucket, takeover=0, sid=None):
         opcode = CMD_CLOSE_STREAM
         Operation.__init__(self, opcode,
-                           vbucket=vbucket)
+                           vbucket=vbucket,
+                           sid=sid)
 
     def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen):
         response = {'opcode': opcode,

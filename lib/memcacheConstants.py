@@ -280,7 +280,7 @@ REQ_PKT_FMT = ">BBHBBHIIQ"
 # magic, opcode, keylen, extralen, datatype, status, bodylen, opaque, cas
 RES_PKT_FMT = ">BBHBBHIIQ"
 # magic, opcode, frameextra, keylen, extralen, datatype, status, bodylen, opaque, cas
-ALT_RES_PKT_FMT = ">BBBBBBHIIQ"
+ALT_PKT_FMT = ">BBBBBBHIIQ"
 
 # min recv packet size
 MIN_RECV_PACKET = struct.calcsize(REQ_PKT_FMT)
