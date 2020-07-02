@@ -175,9 +175,6 @@ def checkSnapshot(vb, se, current, stream):
     if se == current:
         print "Snapshot for vb:{} has completed, end:{}, "\
               "stream.mutation_count:{}".format(vb, se, stream.mutation_count)
-    else:
-        print "not end {} {}".format(se, current)
-
 
 def process_dcp_traffic(streams, args):
     active_streams = len(streams)
@@ -313,9 +310,10 @@ def initiate_connection(args):
     assert response['status'] == SUCCESS
     print "Enabled NOOP"
 
-    #response = dcp_client.general_control("enable_out_of_order_snapshots", "true")
-    #assert response['status'] == SUCCESS
-    #print "Enabled OSO"
+    if args.enable_oso:
+        response = dcp_client.general_control("enable_out_of_order_snapshots", "true")
+        assert response['status'] == SUCCESS
+        print "Enabled OSO"
 
     if args.noop_interval:
         noop_interval = str(args.noop_interval)
@@ -340,6 +338,11 @@ def initiate_connection(args):
         response = dcp_client.general_control("enable_stream_id", "true")
         assert response['status'] == SUCCESS
         print "Enabled Stream-ID"
+
+    esponse = dcp_client.general_control("connection_buffer_size", "10240")
+    assert response['status'] == SUCCESS
+    print "Enabled Flow Control"
+
 
     return dcp_client
 
@@ -541,6 +544,8 @@ def parseArguments():
     parser.add_argument("--enable-expiry", help="Trigger DCP control to allow expiry opcode messages", required=False,
                         action="store_true")
     parser.add_argument("--enable-stream-id", help="Turn on the stream-ID feature (will require use of -f)", required=False,
+                        action="store_true")
+    parser.add_argument("--enable-oso", help="Turn on the Out of Seqno Order backfill", required=False,
                         action="store_true")
     parser.add_argument("-u", "--user", help="User", required=True)
     parser.add_argument("-p", "--password", help="Password", required=True)
