@@ -113,7 +113,7 @@ class MemcachedClient(object):
     def _recvMsg(self):
         response = ""
         while len(response) < MIN_RECV_PACKET:
-            r, _, _ = select.select([self.s], [], [], self.timeout)
+            r, _, _ = select.select([self.s], [], []) #, self.timeout)
             if r:
                 data = self.s.recv(MIN_RECV_PACKET - len(response))
                 if data == '':
@@ -155,10 +155,10 @@ class MemcachedClient(object):
             else:
                 raise exceptions.EOFError("Timeout waiting for socket recv. from {0}".format(self.host))
 
-        return cmd, errcode, opaque, cas, keylen, extralen, dtype, rv, frameextralen
+        return cmd, errcode, opaque, cas, keylen, extralen, dtype, rv, frameextralen, len(response)
 
     def _handleKeyedResponse(self, myopaque):
-        cmd, errcode, opaque, cas, keylen, extralen, dtype, rv, frameextralen = self._recvMsg()
+        cmd, errcode, opaque, cas, keylen, extralen, dtype, rv, frameextralen, _ = self._recvMsg()
         assert myopaque is None or opaque == myopaque, \
             "expected opaque %x, got %x" % (myopaque, opaque)
         if errcode:

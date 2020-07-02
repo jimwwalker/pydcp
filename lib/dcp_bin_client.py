@@ -86,7 +86,7 @@ class DcpClient(MemcachedClient):
         """ sent to notify producer number of bytes client has received"""
 
         op = Ack(nbytes)
-        return self._handle_op(op, 1)
+        return self.send_op(op)
 
     def quit(self):
         """ send quit command to mc - when response is recieved quit reader """
@@ -207,7 +207,7 @@ class DcpClient(MemcachedClient):
                 if self._stream_timeout:
                     return None
 
-                opcode, status, opaque, cas, keylen, extlen, dtype, body, frameextralen = \
+                opcode, status, opaque, cas, keylen, extlen, dtype, body, frameextralen, rxSize = \
                     self._recvMsg()
 
                 if self._opcode_dump:
@@ -217,7 +217,7 @@ class DcpClient(MemcachedClient):
                     response = op.formated_response(opcode, keylen,
                                                     extlen, dtype, status,
                                                     cas, body, opaque,
-                                                    frameextralen)
+                                                    frameextralen, rxSize)
                     return response
 
                 # check if response is for different request
@@ -226,7 +226,7 @@ class DcpClient(MemcachedClient):
                     response = cached_op.formated_response(opcode, keylen,
                                                            extlen, dtype, status,
                                                            cas, body, opaque,
-                                                           frameextralen)
+                                                           frameextralen, rxSize)
                     # save for later
                     cached_op.queue.put(response)
 
@@ -311,9 +311,9 @@ class DcpStream(object):
                 assert 'by_seqno' in response, \
                     "ERROR: vbucket(%s) received mutation without seqno: %s" \
                     % (response['vbucket'], response)
-                assert response['by_seqno'] > self.last_by_seqno, \
-                    "ERROR: Out of order response on vbucket %s: %s" \
-                    % (response['vbucket'], response)
+                #assert response['by_seqno'] > self.last_by_seqno, \
+                #    "ERROR: Out of order response on vbucket %s: %s" \
+                #    % (response['vbucket'], response)
                 self.last_by_seqno = response['by_seqno']
                 self.mutation_count += 1
 
@@ -371,7 +371,7 @@ class Operation(object):
         self.opaque = opaque or random.Random().randint(0, 2 ** 32)
         self.queue = Queue.Queue()
 
-    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen):
+    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen, rxSize):
         return {'opcode': opcode,
                 'status': status,
                 'body': body}
@@ -421,7 +421,7 @@ class CloseStream(Operation):
         Operation.__init__(self, opcode,
                            vbucket=vbucket)
 
-    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen):
+    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen, rxSize):
         response = {'opcode': opcode,
                     'status': status,
                     'value': body}
@@ -438,7 +438,7 @@ class AddStream(Operation):
                            extras=extras,
                            vbucket=vbucket)
 
-    def formated_response(self, opcode, keylen, extlen, status, cas, body, opaque, frameextralen):
+    def formated_response(self, opcode, keylen, extlen, status, cas, body, opaque, frameextralen, rxSize):
         response = {'opcode': opcode,
                     'status': status,
                     'extlen': extlen,
@@ -629,12 +629,20 @@ class StreamRequest(Operation):
         response['version'] = struct.unpack(">QIB", body[frameextralen:frameextralen+13])
         return response
 
-    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen):
+    def format_seqno_advanced(self, response, frameextralen, extlen, body):
+        header_len = 8
+        assert extlen == header_len, "Seqno advanced with incorrect extlen:{}".format(extlen)
+        response['by_seqno'] = struct.unpack(">Q", body[frameextralen:frameextralen+8])[0]
+        print("unpacked {}".format(response['by_seqno']))
+        return response
+
+    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen, rxSize):
 
         response = {'vbucket': status,
                     'opcode' : opcode,
                     'cas' : cas,
-                    'opaque' : opaque}
+                    'opaque' : opaque,
+                    'rx_size' : rxSize}
 
         if opcode == CMD_STREAM_REQ:
             response = self.format_stream_req(response, status, body)
@@ -656,6 +664,9 @@ class StreamRequest(Operation):
 
         elif opcode == CMD_SYSTEM_EVENT:
             response = self.format_system_event(response, frameextralen, extlen, body)
+
+        elif opcode == CMD_SEQNO_ADVANCED:
+            response = self.format_seqno_advanced(response, frameextralen, extlen, body)
 
         else:
             assert "Unknown opcode {}".format(opcode)
@@ -700,7 +711,7 @@ class GetFailoverLog(Operation):
         Operation.__init__(self, opcode,
                            vbucket=vbucket)
 
-    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen):
+    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen, rxSize):
 
         failover_log = []
 
@@ -728,7 +739,7 @@ class FlowControl(Operation):
                            key="connection_buffer_size",
                            value=str(buffer_size))
 
-    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen):
+    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen, rxSize):
         response = {'opcode': opcode,
                     'status': status,
                     'body': body}
@@ -743,7 +754,7 @@ class GeneralControl(Operation):
                            key,
                            value)
 
-    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen):
+    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen, rxSize):
         response = {'opcode': opcode,
                     'status': status,
                     'body': body}
@@ -760,7 +771,7 @@ class Ack(Operation):
         Operation.__init__(self, opcode,
                            extras=extras)
 
-    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen):
+    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen, rxSize):
         response = {'opcode': opcode,
                     'status': status,
                     'error': body}
@@ -773,7 +784,7 @@ class Quit(Operation):
         opcode = CMD_QUIT
         Operation.__init__(self, opcode)
 
-    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen):
+    def formated_response(self, opcode, keylen, extlen, dtype, status, cas, body, opaque, frameextralen, rxSize):
         response = {'opcode': opcode,
                     'status': status}
         return response

@@ -126,7 +126,7 @@ def handleSystemEvent(response, manifest):
         # will happen when only the tombstone of a scope remains
         uid, sid = struct.unpack(">QI", response['value'])
         print "DCP Event: vb:{}, sid:{}, Scope id:{}, from manifest:{} DROPPED at "\
-              "seqno:{}".format(response['vbucket'], response['streamId'], sid, uid, response['seqno'])
+              "seqno:{}".format(response['vbucket'], response['streamId'], sid, uid, response['by_seqno'])
         manifest['uid'] = format(uid, 'x')
         scopes = []
         for e in manifest['scopes']:
@@ -156,6 +156,12 @@ def handleMutation(response):
         output_string = str(DCP_Opcode_Dictionary[action]) + " -> " + output_string
         print seqno, output_string
 
+def handleSeqnoAdvanced(response):
+    print "Seqno Advanced vb:{}, sid:{}, "\
+          "seqno:{}".format(response['vbucket'],
+                                             response['streamId'],
+                                             response['by_seqno'])
+
 def handleMarker(response):
     print "Snapshot Marker vb:{}, sid:{}, "\
           "start:{}, end:{}, flag:{}".format(response['vbucket'],
@@ -169,6 +175,8 @@ def checkSnapshot(vb, se, current, stream):
     if se == current:
         print "Snapshot for vb:{} has completed, end:{}, "\
               "stream.mutation_count:{}".format(vb, se, stream.mutation_count)
+    else:
+        print "not end {} {}".format(se, current)
 
 
 def process_dcp_traffic(streams, args):
@@ -203,8 +211,10 @@ def process_dcp_traffic(streams, args):
                                       vb['snap_end'],
                                       response['by_seqno'],
                                       stream)
+                        select_dcp_client(response['vbucket']).ack(response['rx_size'])
                     elif opcode == CMD_SNAPSHOT_MARKER:
                         vb['snap_start'], vb['snap_end'] = handleMarker(response)
+                        select_dcp_client(response['vbucket']).ack(response['rx_size'])
                     elif opcode == CMD_SYSTEM_EVENT:
                         vb['manifest'] = handleSystemEvent(response,
                                                            vb['manifest'])
@@ -212,14 +222,26 @@ def process_dcp_traffic(streams, args):
                                       vb['snap_end'],
                                       response['by_seqno'],
                                       stream)
+                        select_dcp_client(response['vbucket']).ack(response['rx_size'])
                     elif opcode == CMD_STREAM_END:
                         print "Received stream end. Stream complete with "\
                               "reason {}.".format(response['flags'])
                         vb['complete'] = True
                         active_streams -= 1
                         dcp_log_data.push_sequence_no(response['vbucket'])
+                        sys.exit()
+                    elif opcode == CMD_SEQNO_ADVANCED:
+                        handleSeqnoAdvanced(response)
+                        checkSnapshot(response['vbucket'],
+                                      vb['snap_end'],
+                                      response['by_seqno'],
+                                      stream)
+                        select_dcp_client(response['vbucket']).ack(response['rx_size'])
+                    elif opcode == 101:
+                        print("OSO snapshot")
                     else:
                         print "Unexpected and unhandled opcode:{}".format(opcode)
+                        #sys.exit()
                 else:
                     print 'No response'
 
@@ -276,16 +298,24 @@ def initiate_connection(args):
     dcp_client.bucket_select(bucket)
     print "Successfully AUTHed to", bucket
 
-    response = dcp_client.open_producer("pydcp stream",
+    response = dcp_client.open_producer("pydcp stream" + str(os.getpid()),
                                         xattr=stream_xattrs,
                                         delete_times=include_delete_times,
                                         collections=stream_collections)
-    assert response['status'] == SUCCESS
+
+    if response['status'] != SUCCESS:
+        print("DCP Open Failed status:{}".format(response['status']))
+        sys.exit()
+
     print "Opened DCP consumer connection"
 
     response = dcp_client.general_control("enable_noop", "true")
     assert response['status'] == SUCCESS
     print "Enabled NOOP"
+
+    #response = dcp_client.general_control("enable_out_of_order_snapshots", "true")
+    #assert response['status'] == SUCCESS
+    #print "Enabled OSO"
 
     if args.noop_interval:
         noop_interval = str(args.noop_interval)

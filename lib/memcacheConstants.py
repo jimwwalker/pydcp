@@ -49,6 +49,7 @@ CMD_DCP_NOOP         = 0x5c
 CMD_DCP_ACK          = 0x5d
 CMD_CONTROL          = 0x5e
 CMD_SYSTEM_EVENT     = 0x5f
+CMD_SEQNO_ADVANCED   = 0x64
 
 # DCP opcode dictionary
 DCP_Opcode_Dictionary = {CMD_OPEN: 'CMD_OPEN',
